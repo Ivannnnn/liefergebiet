@@ -1,0 +1,209 @@
+<link
+  href="http://cdn.leafletjs.com/leaflet-0.7.3/leaflet.css"
+  rel="stylesheet"
+/>
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  href="https://fonts.googleapis.com/css2?family=Open+Sans&display=swap"
+  rel="stylesheet"
+/>
+<link href="style.css" rel="stylesheet" />
+
+<script
+  crossorigin
+  src="https://unpkg.com/react@17/umd/react.development.js"
+></script>
+<script
+  crossorigin
+  src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"
+></script>
+
+<script src="https://unpkg.com/babel-standalone@6.15.0/babel.min.js"></script>
+<script src="http://cdn.leafletjs.com/leaflet-0.7.3/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
+
+<style>
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    position: relative;
+    margin: 0;
+  }
+
+  #map {
+    height: 100%;
+    width: 100%;
+  }
+
+  #title {
+    position: absolute;
+    text-align: center;
+    top: 0;
+    background: white;
+    padding: 8px 20px;
+    width: 100%;
+    opacity: 0.85;
+  }
+
+  #filter {
+    position: absolute;
+    top: 7%;
+    right: 0;
+    background: white;
+    padding: 12px;
+  }
+
+  #filter > small {
+    margin-right: 16px;
+  }
+
+  #filter select {
+    padding: 2px 8px;
+  }
+</style>
+
+<div id="map"></div>
+<div id="ui"></div>
+
+<script src="scraping/data.js"></script>
+
+<script type="text/babel">
+  const BORDER_ONLY = {
+    color: 'black',
+    opacity: 1,
+    fillOpacity: 0,
+  }
+
+  const FILTER_OPTIONS = {
+    free: 0,
+    '< 2€': 2,
+    '< 3€': 3,
+    '< 4€': 4,
+    '< 5€': 5,
+    all: 9999,
+  }
+
+  const map = (function () {
+    const map = L.map('map').setView([51.3388528, 12.3741965], 13)
+
+    const osm = L.tileLayer(
+      'http://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
+    ).addTo(map)
+
+    function putPolygon(polygons, style) {
+      return polygons.map((polygon, i) => {
+        return L.polygon(polygon, style).addTo(map)
+      })
+    }
+
+    function putMarker([lat, lan], { onClick }) {
+      return L.marker([lat, lan]).addTo(map).on('click', onClick)
+    }
+
+    function remove(...whatever) {
+      whatever.forEach((w) => map.removeLayer(w))
+    }
+
+    return { putPolygon, putMarker, remove }
+  })()
+
+  const flatten = ([first, ...rest]) => first.concat(...rest)
+
+  function mergePolygons(first, ...rest) {
+    return rest.reduce((acc, polygon) => {
+      return turf.union(acc, turf.multiPolygon([polygon]))
+    }, turf.multiPolygon([first])).geometry.coordinates
+  }
+
+  const isDeliveredByScoober = (id) => scooberDelivery[id]
+  const restoHasPolygon = (id) => polygons[id] && polygons[id].length > 0
+
+  const scooberRestoIds = Object.keys(restaurants)
+    .filter(isDeliveredByScoober)
+    .filter(restoHasPolygon)
+
+  const scooberPolygons = scooberRestoIds.map((id) => polygons[id])
+
+  const costLessOrEqualsThen = (value) => (polygon) => polygon[0] <= value
+
+  const { useState, useEffect, useRef, Fragment } = React
+
+  let shownRestoPolygons = []
+  let shownTotalArea = []
+  let filter = null
+
+  function App() {
+    const [{ activeRestoId }, setState] = useState({
+      activeRestoId: null,
+    })
+    const [selected, setSelected] = useState('all')
+
+    useEffect(() => {
+      scooberRestoIds.forEach((id) => {
+        const [lat, lan] = [restaurants[id][2], restaurants[id][3]]
+
+        map.putMarker([lat, lan], {
+          onClick: () => {
+            map.remove(...shownRestoPolygons)
+
+            shownRestoPolygons = map.putPolygon(
+              polygons[id].filter(filter).map((p) => p[1]),
+              { color: 'black', dashArray: '10, 10', weight: 2 }
+            )
+
+            setState({ activeRestoId: id })
+          },
+        })
+      })
+    }, [])
+
+    useEffect(() => {
+      filter = costLessOrEqualsThen(FILTER_OPTIONS[selected])
+
+      const filtered = flatten(scooberPolygons)
+        .filter(filter)
+        .map(([cost, polygon]) => polygon)
+
+      const merged = mergePolygons(...filtered)
+
+      map.remove(...shownTotalArea)
+
+      shownTotalArea = map.putPolygon(merged, BORDER_ONLY)
+    }, [selected])
+
+    return (
+      <Fragment>
+        {activeRestoId && <div id="title">{restaurants[activeRestoId][0]}</div>}
+
+        <div id="filter">
+          <small>Delivery cost</small>
+          <Select
+            selected={selected}
+            options={FILTER_OPTIONS}
+            onChange={setSelected}
+          />
+        </div>
+      </Fragment>
+    )
+  }
+
+  function Select({ selected, options, onChange }) {
+    return (
+      <select value={selected} onChange={(e) => onChange(e.target.value)}>
+        {Object.keys(options).map((key) => {
+          return (
+            <option key={key} value={key}>
+              {key}
+            </option>
+          )
+        })}
+      </select>
+    )
+  }
+
+  ReactDOM.render(<App />, document.querySelector('#ui'))
+</script>
